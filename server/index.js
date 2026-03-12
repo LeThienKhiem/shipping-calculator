@@ -1,117 +1,79 @@
 // server/index.js
-// SeaRates proxy: Express + Puppeteer (stealth). Requires: npm install express puppeteer-extra puppeteer-extra-plugin-stealth
+// SeaRates API proxy using Express + native https (no Puppeteer).
+// Run: node server/index.js
 
+const https = require("https");
 const express = require("express");
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-puppeteer.use(StealthPlugin());
 
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 const PLATFORM_ID = "40275";
 const API_KEY = "K-81E37B04-2D41-4779-B8C9-570CEB576903";
+const TOKEN_URL = `https://www.searates.com/auth/platform-token?id=${PLATFORM_ID}&api_key=${API_KEY}`;
+const GRAPHQL_HOST = "rates.searates.com";
 
-let pageWWW, pageRates, cachedToken;
+let cachedToken = null;
 
-async function waitForPage(page, name) {
-  let attempts = 0;
-  while (attempts < 10) {
-    try {
-      await page.evaluate(() => document.readyState);
-      return;
-    } catch (e) {
-      console.error(`[${name}] not ready, waiting...`);
-      await new Promise(r => setTimeout(r, 1000));
-      attempts++;
-    }
-  }
-  throw new Error(`${name} never became ready`);
+function httpsGet(url) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const opts = {
+      hostname: u.hostname,
+      port: 443,
+      path: u.pathname + u.search,
+      method: "GET",
+      headers: { Accept: "application/json" },
+    };
+    const req = https.request(opts, (res) => {
+      let body = "";
+      res.on("data", (chunk) => (body += chunk));
+      res.on("end", () => resolve({ status: res.statusCode, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
-async function bfWWW(url, opts = {}) {
-  await waitForPage(pageWWW, "pageWWW");
-  return pageWWW.evaluate(async (url, opts) => {
-    try {
-      const r = await fetch(url, { credentials: "include", ...opts });
-      return { status: r.status, body: await r.text() };
-    } catch (e) { return { status: 0, body: e.message }; }
-  }, url, opts);
-}
-
-async function bfRates(url, opts = {}) {
-  await waitForPage(pageRates, "pageRates");
-  return pageRates.evaluate(async (url, opts) => {
-    try {
-      const r = await fetch(url, { credentials: "include", ...opts });
-      return { status: r.status, body: await r.text() };
-    } catch (e) { return { status: 0, body: e.message }; }
-  }, url, opts);
+function httpsPost(hostname, path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const buf = Buffer.from(body, "utf8");
+    const opts = {
+      hostname,
+      port: 443,
+      path: path || "/",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "Content-Length": buf.length,
+        ...headers,
+      },
+    };
+    const req = https.request(opts, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on("error", reject);
+    req.write(buf);
+    req.end();
+  });
 }
 
 async function getToken() {
   if (cachedToken) return cachedToken;
-  const url = `https://www.searates.com/auth/platform-token?id=${PLATFORM_ID}&api_key=${API_KEY}`;
-  const { status, body } = await bfWWW(url, { headers: { Accept: "application/json" } });
+  const { status, body } = await httpsGet(TOKEN_URL);
+  if (status !== 200) throw new Error(`Token request failed: ${status} ${body}`);
   const json = JSON.parse(body);
   cachedToken = json["s-token"] || json.token || json.access_token;
-  if (!cachedToken) throw new Error("No token found: " + body);
+  if (!cachedToken) throw new Error("No token in response: " + body);
   return cachedToken;
 }
 
 async function gql(query) {
   const token = await getToken();
-  const { status, body } = await bfRates("https://rates.searates.com/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Authorization": `Bearer ${token}`,
-    },
-    body: JSON.stringify({ query }),
+  return httpsPost(GRAPHQL_HOST, "/graphql", JSON.stringify({ query }), {
+    Authorization: `Bearer ${token}`,
   });
-  return { status, body };
-}
-
-async function init(retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const browser = await puppeteer.launch({
-        headless: "new",
-        args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-blink-features=AutomationControlled"],
-      });
-
-      const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
-
-      pageWWW = await browser.newPage();
-      await pageWWW.setUserAgent(ua);
-      await pageWWW.setViewport({ width: 1366, height: 768 });
-      await pageWWW.goto("https://www.searates.com", {
-        waitUntil: "domcontentloaded",
-        timeout: 120000,
-      });
-      await pageWWW.goto("https://www.searates.com/logistics-explorer", {
-        waitUntil: "domcontentloaded",
-        timeout: 120000,
-      });
-      await new Promise(r => setTimeout(r, 5000));
-
-      await getToken();
-
-      pageRates = await browser.newPage();
-      await pageRates.setUserAgent(ua);
-      await pageRates.setViewport({ width: 1366, height: 768 });
-      await pageRates.goto("https://rates.searates.com", {
-        waitUntil: "domcontentloaded",
-        timeout: 120000,
-      });
-      await new Promise(r => setTimeout(r, 5000));
-
-      console.log("✅ SeaRates proxy ready on port", PORT);
-      return;
-    } catch (e) {
-      if (i < retries - 1) await new Promise(r => setTimeout(r, 5000));
-      else throw new Error("Failed to init after 3 attempts");
-    }
-  }
 }
 
 const app = express();
@@ -185,9 +147,6 @@ app.post("/graphql", async (req, res) => {
   }
 });
 
-init().then(() => {
-  app.listen(PORT);
-}).catch(e => {
-  console.error(e);
-  process.exit(1);
+app.listen(PORT, () => {
+  console.log("✅ SeaRates proxy ready on port", PORT);
 });

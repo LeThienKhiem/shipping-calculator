@@ -1,6 +1,6 @@
 # SeaRates Logistics Explorer
 
-A full-stack app to compare shipping rates and transit times using the SeaRates API. The backend runs a Puppeteer-based proxy to obtain auth tokens and forward GraphQL requests; the frontend is a React (Vite) UI for selecting ports and viewing rate results.
+A full-stack app to compare shipping rates and transit times using the SeaRates API. The backend is an Express server that obtains auth tokens and forwards GraphQL requests to SeaRates via direct HTTPS; the frontend is a React (Vite) UI for selecting ports and viewing rate results.
 
 ## Setup
 
@@ -21,7 +21,7 @@ A full-stack app to compare shipping rates and transit times using the SeaRates 
 ## Environment
 
 - **Node.js** is required (recommended LTS).
-- **Backend (API):** port **3001** — Express server + Puppeteer (Chrome).
+- **Backend (API):** port **3001** (or `PORT` env on Vercel) — Express server.
 - **Frontend:** port **5173** — Vite dev server; proxies `/api` to the backend.
 
 ## API
