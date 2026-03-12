@@ -1,5 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
+function apiUrl(path) {
+  const p = path.startsWith('/') ? path : `/${path}`
+  return API_BASE ? `${API_BASE.replace(/\/$/, '')}${p}` : `/api${p}`
+}
+
 const PORTS = [
   { label: "Haiphong, VN", id: "P_19845" },
   { label: "Los Angeles, US", id: "P_15786" },
@@ -194,7 +200,7 @@ function PortSearch({ label, value, onChange }) {
     }
     let cancelled = false
     setSearchLoading(true)
-    fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`)
+    fetch(apiUrl(`/search?q=${encodeURIComponent(debouncedQuery)}`))
       .then((r) => r.json())
       .then((data) => {
         if (!cancelled) setSearchResult({ cities: data.cities ?? [], ports: data.ports ?? [] })
@@ -218,7 +224,7 @@ function PortSearch({ label, value, onChange }) {
     setCityPortsLoading(true)
     setCityPorts(null)
     try {
-      const r = await fetch(`/api/geocode?place_id=${encodeURIComponent(city.place_id)}`)
+      const r = await fetch(apiUrl(`/geocode?place_id=${encodeURIComponent(city.place_id)}`))
       const data = await r.json()
       setCityPorts(data.ports ?? [])
     } catch {
@@ -371,7 +377,7 @@ export default function App() {
     if (showContainer) params.set('container', container)
     if (showWeight && weight) params.set('weight', weight)
     try {
-      const res = await fetch(`/api/rates?${params}`)
+      const res = await fetch(apiUrl(`/rates?${params}`))
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || res.statusText)
       setData(json)
